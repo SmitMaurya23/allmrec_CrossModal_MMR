@@ -10,13 +10,16 @@ def parse(path):
     Parses a gzip file and yields JSON objects line by line.
     """
     g = gzip.open(path, 'rb')
-    for l in tqdm(g):
+    for l in tqdm(g, desc="Parsing file"):
         yield json.loads(l)
 
 def preprocess(fname):
     """
-    Preprocesses the dataset by counting user-item interactions, mapping users and items,
-    and extracting metadata for the recommendation model.
+    Preprocesses the dataset for the recommendation system by:
+    - Counting user-item interactions.
+    - Mapping users and items to unique IDs.
+    - Extracting metadata for items.
+    - Creating user-item interaction sequences.
     """
     countU = defaultdict(lambda: 0)
     countP = defaultdict(lambda: 0)
@@ -42,69 +45,79 @@ def preprocess(fname):
     name_dict = {'title': {}, 'description': {}}
 
     # Reading metadata
-    f = open(f'../../data/amazon/meta_{fname}.json', 'r')
-    json_data = f.readlines()
-    f.close()
-    data_list = [json.loads(line[:-1]) for line in json_data]
-    meta_dict = {}
+    with open(f'../../data/amazon/meta_{fname}.json', 'r') as f:
+        json_data = f.readlines()
+    data_list = [json.loads(line.strip()) for line in json_data]
+    meta_dict = {l['asin']: l for l in data_list}
 
-    for l in data_list:
-        asin = l.get('asin', None)
-        if not asin:
-            continue
-        meta_dict[asin] = {
-            'title': l.get('title', ''),
-            'description': l.get('description', [])
-        }
-    
-    # Debugging: Metadata size
-    print(f"Metadata entries: {len(meta_dict)}")
-
-    # Filtering and mapping users/items
     for l in parse(file_path):
         asin = l['asin']
         rev = l['reviewerID']
         time = l['unixReviewTime']
 
-        if countU[rev] < 5 or countP[asin] < 5:
+        # Threshold adjustment for specific datasets
+        threshold = 5
+        if 'Beauty' in fname or 'Toys' in fname:
+            threshold = 4
+
+        if countU[rev] < threshold or countP[asin] < threshold:
             continue
 
-        if rev not in usermap:
-            usermap[rev] = usernum
+        # User mapping
+        if rev in usermap:
+            userid = usermap[rev]
+        else:
             usernum += 1
-            User[usermap[rev]] = []
+            userid = usernum
+            usermap[rev] = userid
+            User[userid] = []
 
-        if asin not in itemmap:
-            itemmap[asin] = itemnum
+        # Item mapping
+        if asin in itemmap:
+            itemid = itemmap[asin]
+        else:
             itemnum += 1
+            itemid = itemnum
+            itemmap[asin] = itemid
+        User[userid].append([time, itemid])
 
-        User[usermap[rev]].append((itemmap[asin], time))
-        review_dict[itemmap[asin]] = l.get('reviewText', '')
-        name_dict['title'][itemmap[asin]] = meta_dict.get(asin, {}).get('title', '')
-        name_dict['description'][itemmap[asin]] = meta_dict.get(asin, {}).get('description', '')
+        # Review and summary handling
+        if itemid in review_dict:
+            review_dict[itemid]['review'][userid] = l.get('reviewText', "")
+            review_dict[itemid]['summary'][userid] = l.get('summary', "")
+        else:
+            review_dict[itemid] = {'review': {userid: l.get('reviewText', "")},
+                                   'summary': {userid: l.get('summary', "")}}
 
-    # Debugging: Dataset size
-    print(f"Total Users: {len(usermap)}, Total Items: {len(itemmap)}")
+        # Metadata handling
+        try:
+            name_dict['description'][itemid] = (
+                meta_dict[asin].get('description', ['Empty description'])[0]
+            )
+            name_dict['title'][itemid] = meta_dict[asin].get('title', 'No title')
+        except KeyError:
+            name_dict['description'][itemid] = 'Empty description'
+            name_dict['title'][itemid] = 'No title'
 
-    # Ensure mapping matches similarity matrix dimensions
-    assert len(itemmap) > 0, "No items found after filtering. Check preprocessing logic."
-    assert len(usermap) > 0, "No users found after filtering. Check preprocessing logic."
+    # Save processed data
+    output_path = f'../../data/amazon/{fname}_text_name_dict.json.gz'
+    with gzip.open(output_path, 'wb') as tf:
+        pickle.dump(name_dict, tf)
 
-    # Save mappings and processed data
-    os.makedirs(f'../../data/amazon/processed', exist_ok=True)
-    with open(f'../../data/amazon/processed/{fname}_usermap.pkl', 'wb') as f:
-        pickle.dump(usermap, f)
-    with open(f'../../data/amazon/processed/{fname}_itemmap.pkl', 'wb') as f:
-        pickle.dump(itemmap, f)
-    with open(f'../../data/amazon/processed/{fname}_user.pkl', 'wb') as f:
-        pickle.dump(User, f)
-    with open(f'../../data/amazon/processed/{fname}_reviews.pkl', 'wb') as f:
-        pickle.dump(review_dict, f)
-    with open(f'../../data/amazon/processed/{fname}_names.pkl', 'wb') as f:
-        pickle.dump(name_dict, f)
+    # Sort user interactions by timestamp
+    for userid in User.keys():
+        User[userid].sort(key=lambda x: x[0])
 
-    print(f"Preprocessed data saved for {fname}.")
+    print(f"Total users: {usernum}, Total items: {itemnum}")
 
-# Example of running the preprocessing function
+    # Write user-item interactions to text file
+    with open(f'../../data/amazon/{fname}.txt', 'w') as f:
+        for user, interactions in User.items():
+            for interaction in interactions:
+                f.write(f"{user} {interaction[1]}\n")
+
+    print(f"Preprocessing completed for {fname}. Data saved.")
+
+# Example execution
 if __name__ == "__main__":
     preprocess("Movies_and_TV")
