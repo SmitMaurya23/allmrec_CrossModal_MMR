@@ -403,9 +403,9 @@ class A_llmrec_model(nn.Module):
         embeddings = []        # To store candidate embeddings
 
         with torch.no_grad():
-            # Extract and normalize log embeddings
+            # Extract and project log embeddings
             log_emb = self.recsys.model(u, seq, pos, neg, mode='log_only')
-            log_emb = F.normalize(log_emb, p=2, dim=-1)
+            log_emb = self.log_emb_proj(F.normalize(log_emb, p=2, dim=-1))
 
             for i in range(len(u)):
                 target_item_id = pos[i]
@@ -440,14 +440,13 @@ class A_llmrec_model(nn.Module):
                 interact_embs.append(interact_emb)
                 candidate_embs.append(candidate_emb)
                 
-                # Compute relevance scores
+                # Compute relevance scores with corrected dimensions
                 if return_scores or return_embeddings:
-                    scores = torch.matmul(log_emb[i], candidate_emb.T)
-                    relevance_scores.append(scores.cpu().numpy())
+                    scores = torch.matmul(log_emb[i].unsqueeze(0), candidate_emb.T)
+                    relevance_scores.append(scores.squeeze(0).cpu().numpy())
                     if return_embeddings:
                         embeddings.append(candidate_emb.cpu().numpy())
 
-            log_emb = self.log_emb_proj(log_emb)
             atts_llm = torch.ones(log_emb.size()[:-1], dtype=torch.long).to(self.device)
             atts_llm = atts_llm.unsqueeze(1)
             log_emb = log_emb.unsqueeze(1)
@@ -499,11 +498,16 @@ class A_llmrec_model(nn.Module):
                 print(f"Error saving recommendations: {e}")
 
         if return_scores and return_embeddings:
+            print("Returning relevance scores, embeddings, and output text.")
             return relevance_scores, embeddings, output_text
         elif return_scores:
+            print("Returning relevance scores and output text.")
             return relevance_scores, output_text
         elif return_embeddings:
+            print("Returning embeddings and output text.")
             return embeddings, output_text
         else:
+            print("Returning output text only.")
             return output_text
+
 

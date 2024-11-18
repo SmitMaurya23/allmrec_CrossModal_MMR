@@ -148,10 +148,13 @@ def train_model_phase2_(rank,world_size,args):
     return
 
 def inference_(rank, world_size, args):
+    import os
+    os.makedirs('./output', exist_ok=True)  # Ensure output directory exists
+
     if args.multi_gpu:
         setup_ddp(rank, world_size)
         args.device = 'cuda:' + str(rank)
-        
+
     model = A_llmrec_model(args).to(args.device)
     phase1_epoch = 10
     phase2_epoch = 5
@@ -166,33 +169,35 @@ def inference_(rank, world_size, args):
         cc += len(user_train[u])
     print('average sequence length: %.2f' % (cc / len(user_train)))
     model.eval()
-    
+
     if usernum > 10000:
         users = random.sample(range(1, usernum + 1), 10000)
     else:
         users = range(1, usernum + 1)
-    
+
     user_list = []
     for u in users:
         if len(user_train[u]) < 1 or len(user_test[u]) < 1: continue
         user_list.append(u)
 
     inference_data_set = SeqDataset_Inference(user_train, user_valid, user_test, user_list, itemnum, args.maxlen)
-    
+
     if args.multi_gpu:
-        inference_data_loader = DataLoader(inference_data_set, batch_size=args.batch_size_infer, sampler=DistributedSampler(inference_data_set, shuffle=True), pin_memory=True)
+        inference_data_loader = DataLoader(inference_data_set, batch_size=args.batch_size_infer,
+                                           sampler=DistributedSampler(inference_data_set, shuffle=True),
+                                           pin_memory=True)
         model = DDP(model, device_ids=[args.device], static_graph=True)
     else:
         inference_data_loader = DataLoader(inference_data_set, batch_size=args.batch_size_infer, pin_memory=True)
-    
+
     relevance_scores = []  # To store relevance scores
     embeddings = []        # To store item embeddings
     recommendations = []   # To store generated recommendations
-    
+
     for _, data in enumerate(inference_data_loader):
         u, seq, pos, neg = data
         u, seq, pos, neg = u.numpy(), seq.numpy(), pos.numpy(), neg.numpy()
-        
+
         # Get relevance scores, embeddings, and recommendations
         scores, emb, recs = model.generate([u, seq, pos, neg, rank], return_scores=True, return_embeddings=True)
         relevance_scores.extend(scores)
@@ -203,7 +208,7 @@ def inference_(rank, world_size, args):
     np.save('./output/relevance_scores.npy', np.array(relevance_scores))
     np.save('./output/embeddings.npy', np.array(embeddings))
     print(f"Relevance scores and embeddings saved in './output/' directory.")
-    
+
     # Save recommendations to file
     with open('./output/recommendations.txt', 'w') as f:
         for rec in recommendations:
