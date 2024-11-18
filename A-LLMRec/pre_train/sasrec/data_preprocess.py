@@ -91,10 +91,15 @@ def preprocess(fname):
 
         # Metadata handling
         try:
-            name_dict['description'][itemid] = (
-                meta_dict[asin].get('description', ['Empty description'])[0]
+            description = (
+                meta_dict.get(asin, {}).get('description', ['Empty description'])[0]
+                if meta_dict.get(asin, {}).get('description', [])
+                else 'Empty description'
             )
-            name_dict['title'][itemid] = meta_dict[asin].get('title', 'No title')
+            title = meta_dict.get(asin, {}).get('title', 'No title')
+
+            name_dict['description'][itemid] = description
+            name_dict['title'][itemid] = title
         except KeyError:
             name_dict['description'][itemid] = 'Empty description'
             name_dict['title'][itemid] = 'No title'
