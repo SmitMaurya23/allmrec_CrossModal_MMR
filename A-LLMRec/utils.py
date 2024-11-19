@@ -1,8 +1,6 @@
 import os
-import numpy as np
 from datetime import datetime
 from pytz import timezone
-from scipy.linalg import det  # Added for DPP
 
 def create_dir(directory):
     if not os.path.exists(directory):
@@ -18,13 +16,6 @@ def find_filepath(target_path, target_word):
             
     return file_paths
 
-# Added DPP utility functions
-def compute_dpp_likelihood(kernel_matrix, item_set):
-    sub_matrix = kernel_matrix[np.ix_(item_set, item_set)]
-    return det(sub_matrix)
-
-def load_kernel_matrix(file_path):
-    return np.load(file_path)
-
-def save_kernel_matrix(kernel_matrix, file_path):
-    np.save(file_path, kernel_matrix)
+    
+    
+    
