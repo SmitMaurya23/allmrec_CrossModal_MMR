@@ -10,6 +10,31 @@ from models.recsys_model import *
 from models.llm4rec import *
 from sentence_transformers import SentenceTransformer
 
+
+def dpp_sampling(embeddings, k=5):
+    """
+    Perform DPP sampling to select k items from the provided embeddings.
+    embeddings: Tensor of shape [num_items, emb_dim]
+    k: number of items to select
+    """
+    # Compute the kernel matrix (Gram matrix)
+    kernel_matrix = torch.matmul(embeddings, embeddings.T)
+    # Apply the DPP selection process
+    selected_items = []
+    for _ in range(k):
+        if len(selected_items) == 0:
+            # Select the first item randomly
+            selected_idx = np.random.randint(0, embeddings.size(0))
+        else:
+            # Calculate the marginal gain for each item
+            marginal_gains = kernel_matrix[selected_items, :][:, selected_items].sum(axis=0) - kernel_matrix[selected_items, :].sum(axis=0)
+            marginal_gains = kernel_matrix.sum(axis=0) - marginal_gains
+            selected_idx = np.argmax(marginal_gains.cpu().numpy())
+        
+        selected_items.append(selected_idx)
+    return selected_items
+
+
 class CrossModalAttention(nn.Module):
     def __init__(self, rec_dim, text_dim, device):
         super().__init__()
@@ -174,6 +199,7 @@ class A_llmrec_model(nn.Module):
             item_embs, _ = self.mlp(item_embs)
         
         return item_embs
+
     
     def forward(self, data, optimizer=None, batch_iter=None, mode='phase1'):
         if mode == 'phase1':
@@ -308,25 +334,26 @@ class A_llmrec_model(nn.Module):
     
     def make_candidate_text(self, interact_ids, candidate_num, target_item_id, target_item_title):
         neg_item_id = []
-        while len(neg_item_id)<50:
+        while len(neg_item_id) < 50:
             t = np.random.randint(1, self.item_num+1)
             if not (t in interact_ids or t in neg_item_id):
                 neg_item_id.append(t)
-        random.shuffle(neg_item_id)
         
-        candidate_ids = [target_item_id]
-        candidate_text = [target_item_title + '[CandidateEmb]']
-
-        for neg_candidate in neg_item_id[:candidate_num - 1]:
-            candidate_text.append(self.find_item_text_single(neg_candidate, title_flag=True, description_flag=False) + '[CandidateEmb]')
-            candidate_ids.append(neg_candidate)
-                
+        # Get embeddings for the items
+        candidate_embs = self.get_item_emb(neg_item_id)  # Get embeddings of the negative items
+        
+        # Apply DPP sampling to select diverse candidates
+        selected_candidates = dpp_sampling(candidate_embs, k=candidate_num-1)
+        candidate_ids = [target_item_id] + [neg_item_id[idx] for idx in selected_candidates]
+        candidate_text = [target_item_title + '[CandidateEmb]'] + [self.find_item_text_single(neg_item_id[idx], title_flag=True, description_flag=False) + '[CandidateEmb]' for idx in selected_candidates]
+        
+        # Shuffle candidates (optional)
         random_ = np.random.permutation(len(candidate_text))
         candidate_text = np.array(candidate_text)[random_]
         candidate_ids = np.array(candidate_ids)[random_]
-            
+        
         return ','.join(candidate_text), candidate_ids
-    
+
     def pre_train_phase2(self, data, optimizer, batch_iter):
         epoch, total_epoch, step, total_step = batch_iter
         
