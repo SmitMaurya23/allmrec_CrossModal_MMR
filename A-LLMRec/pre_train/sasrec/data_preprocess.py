@@ -36,9 +36,9 @@ def preprocess(fname):
     name_dict = {'title':{}, 'description':{}}
 
     # Loading metadata
-    f = open(f'../../data/amazon/meta_{fname}.json', 'r')
-    json_data = f.readlines()
-    f.close()
+    with open(f'../../data/amazon/meta_{fname}.json', 'r') as f:
+        json_data = f.readlines()
+    
     data_list = [json.loads(line[:-1]) for line in json_data]
     meta_dict = {}
     for l in data_list:
@@ -77,21 +77,21 @@ def preprocess(fname):
             try:
                 review_dict[itemmap[asin]]['review'][usermap[rev]] = l['reviewText']
             except:
-                a = 0
+                pass
             try:
                 review_dict[itemmap[asin]]['summary'][usermap[rev]] = l['summary']
             except:
-                a = 0
+                pass
         else:
             review_dict[itemmap[asin]] = {'review': {}, 'summary':{}}
             try:
                 review_dict[itemmap[asin]]['review'][usermap[rev]] = l['reviewText']
             except:
-                a = 0
+                pass
             try:
                 review_dict[itemmap[asin]]['summary'][usermap[rev]] = l['summary']
             except:
-                a = 0
+                pass
         
         try:
             # Safely retrieve the description from metadata
@@ -109,8 +109,13 @@ def preprocess(fname):
             print(f"Unexpected error with ASIN {asin}: {e}")
 
     # Save the name dictionary to a file
-    with open(f'../../data/amazon/{fname}.json.gz', 'wb') as tf:
+    # Option 1: Save as Pickle
+    with open(f'../../data/amazon/{fname}_text_name_dict.pkl', 'wb') as tf:
         pickle.dump(name_dict, tf)
+    
+    # Option 2: Save as gzipped JSON (Uncomment if preferred)
+    # with open(f'../../data/amazon/{fname}_text_name_dict.json.gz', 'wt', encoding='utf-8') as tf:
+    #     json.dump(name_dict, tf)
 
     # Sort user interactions by time
     for userid in User.keys():
