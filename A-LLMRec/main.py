@@ -34,7 +34,8 @@ if __name__ == "__main__":
     parser.add_argument('--num_epochs', default=10, type=int)
     parser.add_argument("--stage1_lr", type=float, default=0.0001)
     parser.add_argument("--stage2_lr", type=float, default=0.0001)
-    
+    parser.add_argument("--diversity_weight", type=float, default=0.5, help="Weight for MMR diversity (0 to 1)")
+
     args = parser.parse_args()
     
     args.device = 'cuda:' + str(args.gpu_num)
@@ -44,4 +45,4 @@ if __name__ == "__main__":
     elif args.pretrain_stage2:
         train_model_phase2(args)
     elif args.inference:
-        inference(args)
+        inference(args, diversity_weight=args.diversity_weight)

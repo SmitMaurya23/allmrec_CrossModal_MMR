@@ -148,9 +148,6 @@ def train_model_phase2_(rank,world_size,args):
     return
 
 def inference_(rank, world_size, args):
-    import os
-    os.makedirs('./output', exist_ok=True)  # Ensure output directory exists
-
     if args.multi_gpu:
         setup_ddp(rank, world_size)
         args.device = 'cuda:' + str(rank)
@@ -177,43 +174,44 @@ def inference_(rank, world_size, args):
 
     user_list = []
     for u in users:
-        if len(user_train[u]) < 1 or len(user_test[u]) < 1: continue
+        if len(user_train[u]) < 1 or len(user_test[u]) < 1:
+            continue
         user_list.append(u)
 
     inference_data_set = SeqDataset_Inference(user_train, user_valid, user_test, user_list, itemnum, args.maxlen)
 
     if args.multi_gpu:
-        inference_data_loader = DataLoader(inference_data_set, batch_size=args.batch_size_infer,
-                                           sampler=DistributedSampler(inference_data_set, shuffle=True),
-                                           pin_memory=True)
+        inference_data_loader = DataLoader(
+            inference_data_set,
+            batch_size=args.batch_size_infer,
+            sampler=DistributedSampler(inference_data_set, shuffle=True),
+            pin_memory=True,
+        )
         model = DDP(model, device_ids=[args.device], static_graph=True)
     else:
         inference_data_loader = DataLoader(inference_data_set, batch_size=args.batch_size_infer, pin_memory=True)
-
-    relevance_scores = []  # To store relevance scores
-    embeddings = []        # To store item embeddings
-    recommendations = []   # To store generated recommendations
 
     for _, data in enumerate(inference_data_loader):
         u, seq, pos, neg = data
         u, seq, pos, neg = u.numpy(), seq.numpy(), pos.numpy(), neg.numpy()
 
-        # Get relevance scores, embeddings, and recommendations
-        scores, emb, recs = model.generate([u, seq, pos, neg, rank], return_scores=True, return_embeddings=True)
-        relevance_scores.extend(scores)
-        embeddings.extend(emb)
-        recommendations.extend(recs)
+        # Step 1: Generate initial predictions
+        predictions = model([u, seq, pos, neg, rank], mode="generate")
 
-    # Save extracted data
-    np.save('./output/relevance_scores.npy', np.array(relevance_scores))
-    np.save('./output/embeddings.npy', np.array(embeddings))
-    print(f"Relevance scores and embeddings saved in './output/' directory.")
+        # Step 2: Compute relevance scores
+        relevance_scores = predictions.cpu().detach().numpy()  # Ensure scores are NumPy arrays
 
-    # Save recommendations to file
-    with open('./output/recommendations.txt', 'w') as f:
-        for rec in recommendations:
-            f.write(rec + '\n')
-    print("Recommendations saved to './output/recommendations.txt'.")
+        # Step 3: Fetch embeddings for candidates
+        candidate_items = pos.tolist()  # Assuming pos contains the candidate item embeddings
+        query_embedding = seq.mean(axis=1)  # Example: Use sequence mean as query embedding
 
-    if args.multi_gpu:
-        destroy_process_group()
+        # Step 4: Apply MMR
+        diversified_recommendations = mmr(
+            candidate_items=candidate_items,
+            query=query_embedding,
+            relevance_scores=relevance_scores,
+            diversity_weight=0.5,  # Adjust weight as needed
+        )
+
+        # Step 5: Save or print diversified recommendations
+        print(f"User {u}: Diversified Recommendations: {diversified_recommendations}")

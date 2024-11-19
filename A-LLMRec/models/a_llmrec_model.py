@@ -87,12 +87,16 @@ class A_llmrec_model(nn.Module):
         self.HIT = 0
         self.rec_NDCG = 0
         self.rec_HIT = 0
-        self.lan_NDCG=0
-        self.lan_HIT=0
+        self.lan_NDCG = 0
+        self.lan_HIT = 0
         self.num_user = 0
         self.yes = 0
         
         self.bce_criterion = torch.nn.BCEWithLogitsLoss()
+
+        # Add MMR-related parameters here
+        self.diversity_weight = args.diversity_weight if hasattr(args, 'diversity_weight') else 0.5  # Default to 0.5
+        self.max_candidates = args.max_candidates if hasattr(args, 'max_candidates') else 20  # Default to 20
         
         if args.pretrain_stage2 or args.inference:
             self.llm = llm4rec(device=self.device, llm_model=args.llm)
@@ -264,12 +268,6 @@ class A_llmrec_model(nn.Module):
              '''
             self.cross_modal = CrossModalAttention(self.rec_sys_dim, self.sbert_dim, self.device)
             pos_proj = self.rec_proj(pos_emb)  # Project to same 256 dim
-            
-
-
-
-
-
             pos_fused = self.cross_modal(log_emb, pos_text_embedding)
             neg_fused = self.cross_modal(log_emb, neg_text_embedding)
             # Project pos_emb to match dimensions before multiplication
@@ -310,28 +308,77 @@ class A_llmrec_model(nn.Module):
             
         interact_text = ','.join(interact_text)
         return interact_text, interact_ids
-    
     def make_candidate_text(self, interact_ids, candidate_num, target_item_id, target_item_title):
+        # List to store the negative candidates (non-interacted items)
         neg_item_id = []
-        while len(neg_item_id)<50:
-            t = np.random.randint(1, self.item_num+1)
-            if not (t in interact_ids or t in neg_item_id):
-                neg_item_id.append(t)
-        random.shuffle(neg_item_id)
         
+        # Get the embeddings for the interacted items (to calculate relevance later)
+        interact_embs = self.get_item_emb(interact_ids)  # Get embeddings for the interacted items
+
+        # Generate a pool of non-interacted candidates
+        while len(neg_item_id) < 50:
+            t = np.random.randint(1, self.item_num + 1)  # Random candidate selection
+            if t not in interact_ids and t not in neg_item_id:
+                neg_item_id.append(t)
+        
+        random.shuffle(neg_item_id)
+
         candidate_ids = [target_item_id]
         candidate_text = [target_item_title + '[CandidateEmb]']
+        
+        # Get the embedding for the target item
+        target_item_emb = self.get_item_emb([target_item_id])[0]  # Embedding of the target item
 
+        # Create a list to store candidate embeddings and their relevance scores
+        candidate_embeddings = []
+        relevance_scores = []
+
+        # For each candidate, get the text and embedding, and compute relevance score
         for neg_candidate in neg_item_id[:candidate_num - 1]:
-            candidate_text.append(self.find_item_text_single(neg_candidate, title_flag=True, description_flag=False) + '[CandidateEmb]')
+            # Retrieve text of the candidate
+            candidate_text_single = self.find_item_text_single(neg_candidate, title_flag=True, description_flag=False) + '[CandidateEmb]'
             candidate_ids.append(neg_candidate)
-                
-        random_ = np.random.permutation(len(candidate_text))
-        candidate_text = np.array(candidate_text)[random_]
-        candidate_ids = np.array(candidate_ids)[random_]
+            candidate_text.append(candidate_text_single)
+
+            # Get the candidate's embedding
+            candidate_emb = self.get_item_emb([neg_candidate])[0]
+            candidate_embeddings.append(candidate_emb)
+
+            # Compute relevance score (cosine similarity) between the target item and the candidate
+            relevance_score = torch.cosine_similarity(target_item_emb, candidate_emb, dim=0)
+            relevance_scores.append(relevance_score)
+
+        # Convert candidate embeddings and relevance scores to tensors for processing
+        candidate_embeddings = torch.stack(candidate_embeddings)
+        relevance_scores = torch.tensor(relevance_scores)
+
+        # Now apply MMR for diversity (to reduce similarity with already selected candidates)
+        selected_candidate_indices = [0]  # Always include the target item (index 0)
+
+        # MMR: Select candidates based on both relevance and diversity
+        for i in range(1, len(candidate_ids)):
+            candidate = candidate_embeddings[i]
+            score = relevance_scores[i]
             
-        return ','.join(candidate_text), candidate_ids
-    
+            # Calculate diversity: measure the similarity with already selected candidates
+            diversity_score = torch.tensor([torch.cosine_similarity(candidate, candidate_embeddings[idx], dim=0) for idx in selected_candidate_indices])
+            
+            # MMR score is a combination of relevance and diversity
+            mmr_score = score - self.diversity_weight * diversity_score.max()  # Adjust diversity weighting
+
+            # Append to the selected candidates if the MMR score is high
+            if mmr_score > 0:
+                selected_candidate_indices.append(i)
+            
+            if len(selected_candidate_indices) >= candidate_num:
+                break
+
+        # Return the selected candidate texts and ids
+        final_candidate_text = [candidate_text[idx] for idx in selected_candidate_indices]
+        final_candidate_ids = [candidate_ids[idx] for idx in selected_candidate_indices]
+
+        return ','.join(final_candidate_text), final_candidate_ids
+
     def pre_train_phase2(self, data, optimizer, batch_iter):
         epoch, total_epoch, step, total_step = batch_iter
         
@@ -401,7 +448,8 @@ class A_llmrec_model(nn.Module):
         candidate_embs = []
         relevance_scores = []  # To store relevance scores
         embeddings = []        # To store candidate embeddings
-
+        
+        # Process data without updating model weights
         with torch.no_grad():
             # Extract and project log embeddings
             log_emb = self.recsys.model(u, seq, pos, neg, mode='log_only')
@@ -423,7 +471,7 @@ class A_llmrec_model(nn.Module):
                     input_text += 'This user has played '
                 elif self.args.rec_pre_trained_data in ['Luxury_Beauty', 'Toys_and_Games']:
                     input_text += 'This user has bought '
-                    
+                
                 input_text += interact_text
                 input_text += f' in the previous. Recommend one next {self.args.rec_pre_trained_data.lower()} for this user from the following title set: '
                 input_text += candidate_text
@@ -446,68 +494,58 @@ class A_llmrec_model(nn.Module):
                     relevance_scores.append(scores.squeeze(0).cpu().numpy())
                     if return_embeddings:
                         embeddings.append(candidate_emb.cpu().numpy())
-
-            atts_llm = torch.ones(log_emb.size()[:-1], dtype=torch.long).to(self.device)
-            atts_llm = atts_llm.unsqueeze(1)
-            log_emb = log_emb.unsqueeze(1)
-
-            self.llm.llm_tokenizer.padding_side = "left"
-            llm_tokens = self.llm.llm_tokenizer(
-                text_input,
-                padding="longest",
-                return_tensors="pt"
-            ).to(self.device)
             
-            with torch.cuda.amp.autocast():
-                inputs_embeds = self.llm.llm_model.get_input_embeddings()(llm_tokens.input_ids)
-                llm_tokens, inputs_embeds = self.llm.replace_hist_candi_token(llm_tokens, inputs_embeds, interact_embs, candidate_embs)
+            # Compute MMR for candidate selection
+            final_candidate_ids = []
+            final_candidate_text = []
+            diversity_weight = 0.5  # You can adjust the weight for diversity
+
+            # Get the embeddings for the candidates
+            candidate_embeddings = torch.stack(candidate_embs)
+            
+            # Calculate relevance for each candidate with respect to the user's log embedding
+            relevance_scores = torch.matmul(log_emb, candidate_embeddings.T)
+            
+            selected_candidates = [0]  # Always select the target item (index 0)
+            final_candidate_ids.append(candidate_ids[0])
+            final_candidate_text.append(candidate_text[0])
+            
+            for idx in range(1, len(candidate_ids)):
+                candidate = candidate_embeddings[idx]
+                relevance_score = relevance_scores[0][idx]  # Relevance score for the current candidate
                 
-                attention_mask = llm_tokens.attention_mask
-                inputs_embeds = torch.cat([log_emb, inputs_embeds], dim=1)
-                attention_mask = torch.cat([atts_llm, llm_tokens.attention_mask], dim=1)
+                # Compute diversity: similarity with already selected candidates
+                diversity_scores = torch.tensor([torch.cosine_similarity(candidate, candidate_embeddings[sel], dim=0) for sel in selected_candidates])
+                max_diversity_score = diversity_scores.max() if len(diversity_scores) > 0 else 0
                 
-                outputs = self.llm.llm_model.generate(
-                    inputs_embeds=inputs_embeds,
-                    attention_mask=attention_mask,
-                    do_sample=False,
-                    top_p=0.9,
-                    temperature=1,
-                    num_beams=1,
-                    max_length=512,
-                    min_length=1,
-                    pad_token_id=self.llm.llm_tokenizer.eos_token_id,
-                    repetition_penalty=1.5,
-                    length_penalty=1,
-                    num_return_sequences=1,
-                )
+                # MMR score: relevance minus diversity
+                mmr_score = relevance_score - diversity_weight * max_diversity_score
+                
+                # Select based on MMR
+                if mmr_score > 0:  # Select candidates with positive MMR score
+                    selected_candidates.append(idx)
+                    final_candidate_ids.append(candidate_ids[idx])
+                    final_candidate_text.append(candidate_text[idx])
+                
+                if len(selected_candidates) >= candidate_num:
+                    break
+            
+            # Prepare the selected candidates
+            final_candidate_text = [candidate_text[idx] for idx in selected_candidates]
+            final_candidate_ids = [candidate_ids[idx] for idx in selected_candidates]
 
-            output_text = self.llm.llm_tokenizer.batch_decode(outputs, skip_special_tokens=True)
-            output_text = [text.strip() for text in output_text]
-
-        # Save recommendations to file
-        for i in range(len(text_input)):
-            try:
-                with open(f'./recommendation_output.txt', 'a') as f:
-                    f.write(text_input[i])
-                    f.write('\n\n')
-                    f.write('Answer: ' + answer[i])
-                    f.write('\n\n')
-                    f.write('LLM: ' + str(output_text[i]))
-                    f.write('\n\n')
-            except Exception as e:
-                print(f"Error saving recommendations: {e}")
-
-        if return_scores and return_embeddings:
-            print("Returning relevance scores, embeddings, and output text.")
-            return relevance_scores, embeddings, output_text
-        elif return_scores:
-            print("Returning relevance scores and output text.")
-            return relevance_scores, output_text
-        elif return_embeddings:
-            print("Returning embeddings and output text.")
-            return embeddings, output_text
-        else:
-            print("Returning output text only.")
-            return output_text
+            # Returning the results
+            if return_scores and return_embeddings:
+                print("Returning relevance scores, embeddings, and output text.")
+                return relevance_scores, embeddings, final_candidate_text
+            elif return_scores:
+                print("Returning relevance scores and output text.")
+                return relevance_scores, final_candidate_text
+            elif return_embeddings:
+                print("Returning embeddings and output text.")
+                return embeddings, final_candidate_text
+            else:
+                print("Returning output text only.")
+                return final_candidate_text
 
 

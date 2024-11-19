@@ -1,5 +1,4 @@
 import os
-import os.path
 import gzip
 import json
 import pickle
@@ -7,110 +6,103 @@ from tqdm import tqdm
 from collections import defaultdict
 
 def parse(path):
+    """Parse JSON data from a gzip file."""
     g = gzip.open(path, 'rb')
-    for l in tqdm(g):
+    for l in tqdm(g, desc="Parsing gzip file"):
         yield json.loads(l)
-        
+
 def preprocess(fname):
     countU = defaultdict(lambda: 0)
     countP = defaultdict(lambda: 0)
-    line = 0
 
     file_path = f'../../data/amazon/{fname}.json.gz'
-    
-    # counting interactions for each user and item
+
+    # Counting interactions for each user and item
+    print("Counting user and item interactions...")
     for l in parse(file_path):
-        line += 1
-        asin = l['asin']
-        rev = l['reviewerID']
-        time = l['unixReviewTime']
-        countU[rev] += 1
-        countP[asin] += 1
-    
-    usermap = dict()
-    usernum = 0
-    itemmap = dict()
-    itemnum = 0
-    User = dict()
+        asin = l.get('asin')
+        rev = l.get('reviewerID')
+        if asin and rev:
+            countU[rev] += 1
+            countP[asin] += 1
+
+    usermap = {}
+    itemmap = {}
+    User = defaultdict(list)
     review_dict = {}
-    name_dict = {'title':{}, 'description':{}}
+    name_dict = {'title': {}, 'description': {}, 'category': {}}
+
+    # Load metadata
+    print("Loading metadata...")
+    try:
+        with open(f'../../data/amazon/meta_{fname}.json', 'r') as f:
+            json_data = [json.loads(line.strip()) for line in f]
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Metadata file for {fname} not found!")
     
-    f = open(f'../../data/amazon/meta_{fname}.json', 'r')
-    json_data = f.readlines()
-    f.close()
-    data_list = [json.loads(line[:-1]) for line in json_data]
-    meta_dict = {}
-    for l in data_list:
-        meta_dict[l['asin']] = l
-    
+    meta_dict = {l['asin']: l for l in json_data if 'asin' in l}
+
+    # Process interaction data
+    print("Processing interaction data...")
+    usernum = 0
+    itemnum = 0
     for l in parse(file_path):
-        line += 1
-        asin = l['asin']
-        rev = l['reviewerID']
-        time = l['unixReviewTime']
-        
-        threshold = 5
-        if ('Beauty' in fname) or ('Toys' in fname):
-            threshold = 4
-            
+        asin = l.get('asin')
+        rev = l.get('reviewerID')
+        time = l.get('unixReviewTime')
+
+        if not asin or not rev or not time:
+            continue
+
+        # Apply thresholds
+        threshold = 4 if ('Beauty' in fname or 'Toys' in fname) else 5
         if countU[rev] < threshold or countP[asin] < threshold:
             continue
-        
-        if rev in usermap:
-            userid = usermap[rev]
-        else:
+
+        # Map user and item IDs
+        if rev not in usermap:
             usernum += 1
-            userid = usernum
-            usermap[rev] = userid
-            User[userid] = []
-        
-        if asin in itemmap:
-            itemid = itemmap[asin]
-        else:
+            usermap[rev] = usernum
+        if asin not in itemmap:
             itemnum += 1
-            itemid = itemnum
-            itemmap[asin] = itemid
+            itemmap[asin] = itemnum
+
+        userid = usermap[rev]
+        itemid = itemmap[asin]
         User[userid].append([time, itemid])
-        
-        
-        if itemmap[asin] in review_dict:
-            try:
-                review_dict[itemmap[asin]]['review'][usermap[rev]] = l['reviewText']
-            except:
-                a = 0
-            try:
-                review_dict[itemmap[asin]]['summary'][usermap[rev]] = l['summary']
-            except:
-                a = 0
-        else:
-            review_dict[itemmap[asin]] = {'review': {}, 'summary':{}}
-            try:
-                review_dict[itemmap[asin]]['review'][usermap[rev]] = l['reviewText']
-            except:
-                a = 0
-            try:
-                review_dict[itemmap[asin]]['summary'][usermap[rev]] = l['summary']
-            except:
-                a = 0
-        try:
-            if len(meta_dict[asin]['description']) ==0:
-                name_dict['description'][itemmap[asin]] = 'Empty description'
-            else:
-                name_dict['description'][itemmap[asin]] = meta_dict[asin]['description'][0]
-            name_dict['title'][itemmap[asin]] = meta_dict[asin]['title']
-        except:
-            a =0
-    
-    with open(f'../../data/amazon/{fname}_text_name_dict.json.gz', 'wb') as tf:
-        pickle.dump(name_dict, tf)
-    
-    for userid in User.keys():
+
+        # Collect review and summary
+        if itemid not in review_dict:
+            review_dict[itemid] = {'review': {}, 'summary': {}}
+        review_dict[itemid]['review'][userid] = l.get('reviewText', 'No Review')
+        review_dict[itemid]['summary'][userid] = l.get('summary', 'No Summary')
+
+        # Populate metadata
+        item_meta = meta_dict.get(asin, {})
+        name_dict['title'][itemid] = item_meta.get('title', 'Unknown Title').strip()
+        name_dict['description'][itemid] = item_meta.get('description', ['No Description'])[0].strip()
+        name_dict['category'][itemid] = item_meta.get('category', ['No Category'])[0].strip()
+
+    # Save metadata
+    print("Saving metadata...")
+    try:
+        with open(f'../../data/amazon/{fname}_text_name_dict.json.gz', 'wb') as tf:
+            pickle.dump(name_dict, tf)
+    except Exception as e:
+        raise IOError(f"Error saving metadata: {e}")
+
+    # Sort user interactions by time
+    for userid in User:
         User[userid].sort(key=lambda x: x[0])
-        
-    print(usernum, itemnum)
-    
-    f = open(f'../../data/amazon/{fname}.txt', 'w')
-    for user in User.keys():
-        for i in User[user]:
-            f.write('%d %d\n' % (user, i[1]))
-    f.close()
+
+    # Write interactions to file
+    print(f"Total Users: {usernum}, Total Items: {itemnum}")
+    try:
+        with open(f'../../data/amazon/{fname}.txt', 'w') as f:
+            for user, interactions in User.items():
+                for _, item in interactions:
+                    f.write(f"{user} {item}\n")
+    except Exception as e:
+        raise IOError(f"Error saving interactions: {e}")
+
+    print(f"Metadata Saved: {len(name_dict['title'])} Titles, {len(name_dict['description'])} Descriptions, {len(name_dict['category'])} Categories")
