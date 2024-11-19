@@ -6,9 +6,9 @@ import argparse
 from model import SASRec
 from data_preprocess import *
 from utils import *
+
 from tqdm import tqdm
 
-# Argument parsing
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', required=True)
 parser.add_argument('--batch_size', default=128, type=int)
@@ -27,34 +27,32 @@ parser.add_argument('--state_dict_path', default=None, type=str)
 args = parser.parse_args()
 
 if __name__ == '__main__':
-    # Debugging device usage
-    print(f"Using device: {args.device}")
-
-    # Dataset processing
+    
+    # global dataset
     preprocess(args.dataset)
     dataset = data_partition(args.dataset)
 
     [user_train, user_valid, user_test, usernum, itemnum] = dataset
-    print(f'user num: {usernum}, item num: {itemnum}')
-
+    print('user num:', usernum, 'item num:', itemnum)
     num_batch = len(user_train) // args.batch_size
-    total_interactions = sum(len(user_train[u]) for u in user_train)
-    print(f'average sequence length: {total_interactions / len(user_train):.2f}')
+    cc = 0.0
+    for u in user_train:
+        cc += len(user_train[u])
+    print('average sequence length: %.2f' % (cc / len(user_train)))
     
-    # Dataloader
-    sampler = WarpSampler(user_train, usernum, itemnum, batch_size=args.batch_size, maxlen=args.maxlen, n_workers=3)
-
-    # Model initialization
+    # dataloader
+    sampler = WarpSampler(user_train, usernum, itemnum, batch_size=args.batch_size, maxlen=args.maxlen, n_workers=3)       
+    # model init
     model = SASRec(usernum, itemnum, args).to(args.device)
     
     for name, param in model.named_parameters():
         try:
             torch.nn.init.xavier_normal_(param.data)
-        except Exception as e:
-            print(f"Error initializing parameter {name}: {e}")
+        except:
+            pass
     
     model.train()
-
+    
     epoch_start_idx = 1
     if args.state_dict_path is not None:
         try:
@@ -64,19 +62,17 @@ if __name__ == '__main__':
             model.load_state_dict(checkpoint)
             tail = args.state_dict_path[args.state_dict_path.find('epoch=') + 6:]
             epoch_start_idx = int(tail[:tail.find('.')]) + 1
-            print(f"Resuming from epoch {epoch_start_idx}")
-        except FileNotFoundError:
-            print(f"Error: Model file not found at {args.state_dict_path}. Please check the path.")
-        except Exception as e:
-            print(f"Failed to load model checkpoint: {e}")
-
-    # Inference only
+        except:
+            print('failed loading state_dicts, pls check file path: ', end="")
+            print(args.state_dict_path)
+            print('pdb enabled for your quick check, pls type exit() if you do not need it')
+            import pdb; pdb.set_trace()
+    
     if args.inference_only:
         model.eval()
         t_test = evaluate(model, dataset, args)
-        print(f'Test results (NDCG@10: {t_test[0]:.4f}, HR@10: {t_test[1]:.4f})')
-
-    # Training loop
+        print('test (NDCG@10: %.4f, HR@10: %.4f)' % (t_test[0], t_test[1]))
+    
     bce_criterion = torch.nn.BCEWithLogitsLoss()
     adam_optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.98))
     
@@ -99,26 +95,33 @@ if __name__ == '__main__':
             loss.backward()
             adam_optimizer.step()
             if step % 100 == 0:
-                print(f"Loss in epoch {epoch} iteration {step}: {loss.item()}")
-
+                print("loss in epoch {} iteration {}: {}".format(epoch, step, loss.item())) # expected 0.4~0.6 after init few epochs
+    
         if epoch % 20 == 0 or epoch == 1:
             model.eval()
             t1 = time.time() - t0
             T += t1
-            print('Evaluating...', end='')
+            print('Evaluating', end='')
             t_test = evaluate(model, dataset, args)
             t_valid = evaluate_valid(model, dataset, args)
-            print(f'\nEpoch: {epoch}, Time: {T}s, Validation (NDCG@10: {t_valid[0]:.4f}, HR@10: {t_valid[1]:.4f}), Test (NDCG@10: {t_test[0]:.4f}, HR@10: {t_test[1]:.4f})')
+            print('\n')
+            print('epoch:%d, time: %f(s), valid (NDCG@10: %.4f, HR@10: %.4f), test (NDCG@10: %.4f, HR@10: %.4f)'
+                    % (epoch, T, t_valid[0], t_valid[1], t_test[0], t_test[1]))
 
+            print(str(t_valid) + ' ' + str(t_test) + '\n')
             t0 = time.time()
             model.train()
-
-        # Save the model at the end of training
+    
         if epoch == args.num_epochs:
             folder = args.dataset
-            fname = f'SASRec.epoch={epoch}.lr={args.lr}.layer={args.num_blocks}.head={args.num_heads}.hidden={args.hidden_units}.maxlen={args.maxlen}.pth'
-            os.makedirs(folder, exist_ok=True)
+            fname = 'SASRec.epoch={}.lr={}.layer={}.head={}.hidden={}.maxlen={}.pth'
+            fname = fname.format(args.num_epochs, args.lr, args.num_blocks, args.num_heads, args.hidden_units, args.maxlen)
+            if not os.path.exists(os.path.join(folder, fname)):
+                try:
+                    os.makedirs(os.path.join(folder))
+                except:
+                    print()
             torch.save([model.kwargs, model.state_dict()], os.path.join(folder, fname))
-
+    
     sampler.close()
     print("Done")
