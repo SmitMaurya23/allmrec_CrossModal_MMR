@@ -4,8 +4,8 @@ import argparse
 
 from utils import *
 from train_model import *
-
 from pre_train.sasrec.data_preprocess import preprocess
+from mmr import calculate_mmr  # Assuming you will add this function in utils.py or another file
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -34,6 +34,7 @@ if __name__ == "__main__":
     parser.add_argument('--num_epochs', default=10, type=int)
     parser.add_argument("--stage1_lr", type=float, default=0.0001)
     parser.add_argument("--stage2_lr", type=float, default=0.0001)
+    parser.add_argument("--lambda_val", type=float, default=0.5, help="MMR lambda parameter for relevance-diversity trade-off")
     
     args = parser.parse_args()
     
@@ -44,4 +45,7 @@ if __name__ == "__main__":
     elif args.pretrain_stage2:
         train_model_phase2(args)
     elif args.inference:
-        inference(args)
+        # Assuming inference function returns a list of items and their relevance scores
+        items, relevance_scores = inference(args)
+        selected_items = calculate_mmr(items, relevance_scores, args.lambda_val)
+        print("Selected items using MMR:", selected_items)

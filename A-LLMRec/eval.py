@@ -1,5 +1,5 @@
 import numpy as np
-    
+
 def get_answers_predictions(file_path):
     answers = []
     llm_predictions = []
@@ -16,14 +16,14 @@ def get_answers_predictions(file_path):
                     end = llm_prediction.rfind('"')
 
                     if (start + end < start) or (start + end < end):
-                        print(1/0)
-                        
-                    llm_prediction = llm_prediction[start+1:end]
+                        print(1 / 0)
+
+                    llm_prediction = llm_prediction[start + 1:end]
                 except Exception as e:
                     print()
-                    
+
                 llm_predictions.append(llm_prediction)
-                
+
     return answers, llm_predictions
 
 def evaluate(answers, llm_predictions, k=1):
@@ -33,23 +33,30 @@ def evaluate(answers, llm_predictions, k=1):
     print(predict_num)
     for answer, prediction in zip(answers, llm_predictions):
         if k > 1:
-            rank = prediction.index(answer)
-            if rank < k:
-                NDCG += 1 / np.log2(rank + 1)
-                HT += 1
+            if answer in prediction:
+                rank = prediction.index(answer)
+                if rank < k:
+                    NDCG += 1 / np.log2(rank + 1)
+                    HT += 1
         elif k == 1:
             if answer in prediction:
                 NDCG += 1
                 HT += 1
-                
+
     return NDCG / predict_num, HT / predict_num
 
 if __name__ == "__main__":
     inferenced_file_path = './recommendation_output.txt'
     answers, llm_predictions = get_answers_predictions(inferenced_file_path)
     print(len(answers), len(llm_predictions))
-    assert(len(answers) == len(llm_predictions))
-    
+    assert len(answers) == len(llm_predictions)
+
     ndcg, ht = evaluate(answers, llm_predictions, k=1)
-    print(f"ndcg at 1: {ndcg}")
-    print(f"hit at 1: {ht}")
+    print(f"NDCG at 1: {ndcg}")
+    print(f"Hit at 1: {ht}")
+    
+    # Evaluate for different values of k if needed
+    for k in [5, 10, 20]:
+        ndcg, ht = evaluate(answers, llm_predictions, k=k)
+        print(f"NDCG at {k}: {ndcg}")
+        print(f"Hit at {k}: {ht}")
