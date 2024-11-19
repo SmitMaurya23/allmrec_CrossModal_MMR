@@ -93,13 +93,19 @@ def preprocess(fname):
             except:
                 a = 0
         try:
-            if len(meta_dict[asin]['description']) ==0:
-                name_dict['description'][itemmap[asin]] = 'Empty description'
+            # Check if the 'description' key exists and is not empty
+            description = meta_dict[asin].get('description', [])
+            if description:
+                name_dict['description'][itemmap[asin]] = description[0].strip()  # Get the first description if available
             else:
-                name_dict['description'][itemmap[asin]] = meta_dict[asin]['description'][0]
-            name_dict['title'][itemmap[asin]] = meta_dict[asin]['title']
-        except:
-            a =0
+                name_dict['description'][itemmap[asin]] = 'No Description'  # Fallback value if description is missing
+
+            name_dict['title'][itemmap[asin]] = meta_dict[asin].get('title', 'No Title')  # Default to 'No Title' if missing
+        except KeyError as e:
+            print(f"KeyError: Missing data for ASIN {asin}. Error: {e}")
+        except Exception as e:
+            print(f"Unexpected error with ASIN {asin}: {e}")
+
     
     with open(f'../../data/amazon/{fname}_text_name_dict.json.gz', 'wb') as tf:
         pickle.dump(name_dict, tf)
