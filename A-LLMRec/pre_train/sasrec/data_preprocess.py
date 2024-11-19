@@ -109,7 +109,7 @@ def preprocess(fname):
             print(f"Unexpected error with ASIN {asin}: {e}")
 
     # Save the name dictionary to a file
-    with open(f'../../data/amazon/{fname}_text_name_dict.json.gz', 'wb') as tf:
+    with open(f'../../data/amazon/{fname}.json.gz', 'wb') as tf:
         pickle.dump(name_dict, tf)
 
     # Sort user interactions by time
