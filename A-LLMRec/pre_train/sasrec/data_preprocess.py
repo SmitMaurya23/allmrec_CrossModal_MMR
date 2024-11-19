@@ -1,3 +1,16 @@
+import os
+import os.path
+import gzip
+import json
+import pickle
+from tqdm import tqdm
+from collections import defaultdict
+
+def parse(path):
+    g = gzip.open(path, 'rb')
+    for l in tqdm(g):
+        yield json.loads(l)
+
 def preprocess(fname):
     countU = defaultdict(lambda: 0)
     countP = defaultdict(lambda: 0)
@@ -84,11 +97,11 @@ def preprocess(fname):
         try:
             # Safely retrieve the description from metadata
             item_meta = meta_dict.get(asin, {})
-            description = item_meta.get('description', '')
+            description = item_meta.get('description', None)
 
-            # Check if description is a valid non-empty string
+            # Check if the description is valid and non-empty string, else use default
             if not description or not isinstance(description, str) or description.strip() == '':
-                name_dict['description'][itemmap[asin]] = 'No Description'  # Default if missing or empty
+                name_dict['description'][itemmap[asin]] = 'No Description'  # Fallback if description is missing or empty
             else:
                 name_dict['description'][itemmap[asin]] = description.strip()
 
