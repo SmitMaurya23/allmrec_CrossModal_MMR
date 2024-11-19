@@ -86,9 +86,9 @@ def preprocess(fname):
             item_meta = meta_dict.get(asin, {})
             description = item_meta.get('description', '')
 
-            # Check if description exists and is non-empty, else set default value
-            if not description or not isinstance(description, str):
-                name_dict['description'][itemmap[asin]] = 'No Description'
+            # Check if description is a valid non-empty string
+            if not description or not isinstance(description, str) or description.strip() == '':
+                name_dict['description'][itemmap[asin]] = 'No Description'  # Default if missing or empty
             else:
                 name_dict['description'][itemmap[asin]] = description.strip()
 
