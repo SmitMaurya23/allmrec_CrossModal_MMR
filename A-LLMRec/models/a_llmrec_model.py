@@ -18,20 +18,25 @@ def dpp_sampling(embeddings, k=5):
     k: number of items to select
     """
     # Compute the kernel matrix (Gram matrix)
-    kernel_matrix = torch.matmul(embeddings, embeddings.T)
-    # Apply the DPP selection process
+    kernel_matrix = torch.matmul(embeddings, embeddings.T)  # Shape [num_items, num_items]
+    
     selected_items = []
+    num_items = embeddings.size(0)
+    
     for _ in range(k):
         if len(selected_items) == 0:
             # Select the first item randomly
-            selected_idx = np.random.randint(0, embeddings.size(0))
+            selected_idx = np.random.randint(0, num_items)
         else:
             # Calculate the marginal gain for each item
             marginal_gains = kernel_matrix[selected_items, :][:, selected_items].sum(axis=0) - kernel_matrix[selected_items, :].sum(axis=0)
             marginal_gains = kernel_matrix.sum(axis=0) - marginal_gains
-            selected_idx = np.argmax(marginal_gains.cpu().numpy())
+            # Select the item with the highest marginal gain
+            selected_idx = torch.argmax(marginal_gains).item()
         
+        # Add selected item to the list and update kernel matrix
         selected_items.append(selected_idx)
+    
     return selected_items
 
 
