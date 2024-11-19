@@ -440,6 +440,7 @@ class A_llmrec_model(nn.Module):
                 interact_embs.append(interact_emb)
                 candidate_embs.append(candidate_emb)
                 
+
                 # Compute relevance scores with corrected dimensions
                 if return_scores or return_embeddings:
                     scores = torch.matmul(log_emb[i].unsqueeze(0), candidate_emb.T)
@@ -497,6 +498,11 @@ class A_llmrec_model(nn.Module):
             except Exception as e:
                 print(f"Error saving recommendations: {e}")
 
+        if return_scores or return_embeddings:
+            if len(relevance_scores) != len(embeddings):
+                print("Error: Scores and embeddings are out of sync during generation.")
+                return None
+            
         if return_scores and return_embeddings:
             print("Returning relevance scores, embeddings, and output text.")
             return relevance_scores, embeddings, output_text

@@ -204,9 +204,15 @@ def inference_(rank, world_size, args):
         embeddings.extend(emb)
         recommendations.extend(recs)
 
-    # Save extracted data
+    if len(relevance_scores) != len(embeddings):
+        print("Warning: Relevance scores and embeddings mismatch. Truncating to the shorter length.")
+        min_len = min(len(relevance_scores), len(embeddings))
+        relevance_scores = relevance_scores[:min_len]
+        embeddings = embeddings[:min_len]
+        
     np.save('./output/relevance_scores.npy', np.array(relevance_scores))
     np.save('./output/embeddings.npy', np.array(embeddings))
+
     print(f"Relevance scores and embeddings saved in './output/' directory.")
 
     # Save recommendations to file
