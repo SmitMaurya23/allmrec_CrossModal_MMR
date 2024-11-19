@@ -5,7 +5,7 @@ import argparse
 from utils import *
 from train_model import *
 from pre_train.sasrec.data_preprocess import preprocess
-from mmr import calculate_mmr  # Assuming you will add this function in utils.py or another file
+from utils import calculate_mmr  # Make sure this import statement is correct
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
