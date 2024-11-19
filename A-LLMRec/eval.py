@@ -154,10 +154,6 @@ if __name__ == "__main__":
         relevance_scores = np.load('./output/relevance_scores.npy', allow_pickle=True)
         similarity_matrix = np.load('./output/embeddings.npy', allow_pickle=True)
 
-        if len(relevance_scores) > similarity_matrix.shape[0]:
-            print("Error: Relevance scores exceed similarity matrix rows. Truncating.")
-            relevance_scores = relevance_scores[:similarity_matrix.shape[0]]
-
         print("Relevance scores loaded:", relevance_scores.shape)
         print("Similarity matrix loaded:", similarity_matrix.shape)
 
