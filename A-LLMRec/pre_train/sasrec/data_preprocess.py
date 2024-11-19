@@ -1,16 +1,3 @@
-import os
-import os.path
-import gzip
-import json
-import pickle
-from tqdm import tqdm
-from collections import defaultdict
-
-def parse(path):
-    g = gzip.open(path, 'rb')
-    for l in tqdm(g):
-        yield json.loads(l)
-
 def preprocess(fname):
     countU = defaultdict(lambda: 0)
     countP = defaultdict(lambda: 0)
@@ -95,27 +82,25 @@ def preprocess(fname):
         
         try:
             # Safely retrieve the description from metadata
-            description = meta_dict[asin].get('description', [])
-            if description:
-                name_dict['description'][itemmap[asin]] = description[0].strip()  # Get the first description if available
+            item_meta = meta_dict.get(asin, {})
+            description = item_meta.get('description', '').strip()
+
+            # Check if description is available, else set default value
+            if not description:
+                name_dict['description'][itemmap[asin]] = 'No Description'
             else:
-                name_dict['description'][itemmap[asin]] = 'No Description'  # Fallback value if description is missing
+                name_dict['description'][itemmap[asin]] = description
 
             # Retrieve title with a fallback if not found
-            name_dict['title'][itemmap[asin]] = meta_dict[asin].get('title', 'No Title')  # Default to 'No Title' if missing
+            name_dict['title'][itemmap[asin]] = item_meta.get('title', 'No Title')  # Default to 'No Title' if missing
         except KeyError as e:
             print(f"KeyError: Missing data for ASIN {asin}. Error: {e}")
         except Exception as e:
             print(f"Unexpected error with ASIN {asin}: {e}")
 
     # Save the name dictionary to a file
-    # Option 1: Save as Pickle
     with open(f'../../data/amazon/{fname}_text_name_dict.pkl', 'wb') as tf:
         pickle.dump(name_dict, tf)
-    
-    # Option 2: Save as gzipped JSON (Uncomment if preferred)
-    # with open(f'../../data/amazon/{fname}_text_name_dict.json.gz', 'wt', encoding='utf-8') as tf:
-    #     json.dump(name_dict, tf)
 
     # Sort user interactions by time
     for userid in User.keys():
